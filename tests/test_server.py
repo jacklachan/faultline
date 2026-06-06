@@ -91,13 +91,15 @@ def test_approve_unknown_rollback_returns_404() -> None:
     assert r.status_code == 404
 
 
-def test_approve_marks_registry_approved() -> None:
+def test_approve_marks_registry_acted_on() -> None:
     client = _client()
     _stream_events(client, {"service": "faultline-victim-frontend"})
     rb_id = client.get("/pending").json()["pending"][0]["rollback_id"]
     r = client.post(f"/approve/{rb_id}")
     assert r.status_code == 200
-    assert r.json()["rollback"]["status"] == "approved"
+    # Phase 7 walks the registry through approved -> merged (fake-mode jumps
+    # straight to merged). Either way it must not stay 'pending'.
+    assert r.json()["rollback"]["status"] in ("approved", "merged")
 
     # /pending only shows status=pending, so the approved one should drop off.
     assert client.get("/pending").json()["pending"] == []

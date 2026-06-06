@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from .gitlab_actions import mark_mr_ready, merge_mr
 from .investigate import stream_investigation
 from .rollbacks import REGISTRY
 
@@ -76,21 +77,30 @@ def pending() -> dict[str, Any]:
 
 
 @app.post("/approve/{rollback_id}")
-def approve(rollback_id: str) -> dict[str, Any]:
-    """Phase-7 entry point. For now just marks the registry entry approved.
+async def approve(rollback_id: str) -> dict[str, Any]:
+    """Mark the draft rollback MR Ready, then merge it.
 
-    Phase 7 will:
-      1. Use GitLab MCP to mark the draft MR ready and merge it.
-      2. Wait for the victim_service GitLab CI to redeploy.
-      3. Set status='merged'.
+    Merging triggers the victim_service ``.gitlab-ci.yml`` deploy job, which
+    redeploys the rolled-back code to Cloud Run. We do not wait for the
+    pipeline to finish here — the UI shows the merge succeeded and the
+    deploy progress is visible in GitLab CI.
     """
     rb = REGISTRY.get(rollback_id)
     if rb is None:
         raise HTTPException(status_code=404, detail="unknown rollback_id")
     if rb.status != "pending":
         return {"rollback": rb.to_dict(), "note": "already acted on"}
+
     REGISTRY.set_status(rollback_id, "approved")
-    return {"rollback": REGISTRY.get(rollback_id).to_dict()}  # type: ignore[union-attr]
+    try:
+        await mark_mr_ready(rb.project_id, rb.mr_iid)
+        merged = await merge_mr(rb.project_id, rb.mr_iid)
+        REGISTRY.set_status(rollback_id, "merged")
+        return {"rollback": REGISTRY.get(rollback_id).to_dict(), "merged": merged}  # type: ignore[union-attr]
+    except Exception as exc:
+        log.exception("approve failed for rollback %s", rollback_id)
+        REGISTRY.set_status(rollback_id, "failed", error=f"{type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail=f"merge failed: {exc}") from exc
 
 
 # Static console mounted last so / does not steal API routes.
