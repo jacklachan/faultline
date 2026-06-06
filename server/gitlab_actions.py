@@ -84,26 +84,52 @@ async def mark_mr_ready(project_path: str, mr_iid: int) -> dict[str, Any]:
 
 
 async def _resolve_revertable_sha(client: httpx.AsyncClient, project_path: str, sha: str) -> str:
-    """Make sure ``sha`` is reachable from default branch.
+    """Pick the actual merge commit to revert.
 
-    The agent often returns the branch-tip SHA the planter created on the
-    source branch. After GitLab merges that branch, the source-tip commit
-    might or might not be reachable from the default branch depending on
-    merge strategy. If it is not, fall back to the latest commit on the
-    default branch — which IS the merge commit that introduced the change.
+    The agent's ``sha`` hint can point at any historical commit on main —
+    including ones that have already been reverted in a prior demo run.
+    We prefer the **latest merged MR** on the project because in this demo
+    that is by definition the regression we just planted. Only if no
+    merged MR exists do we fall back to the agent's hint or the default-
+    branch HEAD.
+
+    Returns a SHA that is (a) reachable from the default branch and
+    (b) the most recent merge into it, so reverting it has the highest
+    chance of cleanly undoing the regression that triggered the
+    investigation.
     """
     base = _gitlab_base()
     pid = _project_url_id(project_path)
     default = os.getenv("GITLAB_DEFAULT_BRANCH", "main")
 
-    probe = await client.get(
-        f"{base}/api/v4/projects/{pid}/repository/commits/{sha}",
+    # (1) latest merged MR on project — usually the fresh demo plant.
+    latest = await client.get(
+        f"{base}/api/v4/projects/{pid}/merge_requests",
         headers=_headers(),
+        params={"state": "merged", "order_by": "updated_at", "sort": "desc", "per_page": 1},
     )
-    if probe.status_code == 200:
-        return sha
+    if latest.status_code == 200:
+        items = latest.json()
+        if items:
+            best = items[0]
+            merge_sha = best.get("merge_commit_sha")
+            if merge_sha:
+                log.info(
+                    "resolved revert target -> latest merged MR !%s merge_commit_sha %s (agent hinted %s)",
+                    best.get("iid"), merge_sha[:8], (sha or "")[:8],
+                )
+                return merge_sha
 
-    log.warning("suspect sha %s not found on %s; using default-branch HEAD", sha, default)
+    # (2) agent's hint, if it exists and is reachable.
+    if sha:
+        probe = await client.get(
+            f"{base}/api/v4/projects/{pid}/repository/commits/{sha}",
+            headers=_headers(),
+        )
+        if probe.status_code == 200:
+            return sha
+
+    # (3) default-branch HEAD.
     head = await client.get(
         f"{base}/api/v4/projects/{pid}/repository/commits",
         headers=_headers(),
@@ -113,6 +139,7 @@ async def _resolve_revertable_sha(client: httpx.AsyncClient, project_path: str, 
     items = head.json()
     if not items:
         raise RuntimeError(f"no commits on {default}; cannot revert")
+    log.warning("falling back to default-branch HEAD %s for revert", items[0]["id"][:8])
     return items[0]["id"]
 
 
@@ -157,12 +184,21 @@ async def revert_commit_via_rest(project_path: str, sha: str, branch: str) -> di
         br_resp.raise_for_status()
 
         # Step 2: revert ``revertable`` ONTO the freshly created branch.
+        # When the target is a merge commit we MUST tell GitLab which parent
+        # is the mainline; `mainline=1` = the first parent (i.e. the
+        # default-branch tip the merge fast-forwarded from). Without this
+        # GitLab returns 400 on merge-commit reverts.
         revert_url = f"{base}/api/v4/projects/{pid}/repository/commits/{revertable}/revert"
         resp = await client.post(
             revert_url,
             headers=_headers(),
-            json={"branch": branch},
+            json={"branch": branch, "mainline": 1},
         )
+        if resp.status_code >= 400 and "mainline" not in resp.text.lower():
+            # Retry without `mainline` for non-merge commits.
+            resp = await client.post(
+                revert_url, headers=_headers(), json={"branch": branch}
+            )
         resp.raise_for_status()
         return resp.json()
 

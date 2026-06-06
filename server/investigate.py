@@ -233,11 +233,21 @@ async def _real_run(
         for c in calls or []:
             name = getattr(c, "name", "tool")
             args = getattr(c, "args", {}) or {}
-            tc = ToolCallEvent(name=name, args=dict(args)).to_dict()
+            args_dict = dict(args)
+            tc = ToolCallEvent(name=name, args=args_dict).to_dict()
             label = POLICY_STEPS.get(name)
             if label:
                 tc["policy_step"] = label[0]
                 tc["policy_label"] = label[1]
+            # Sniff a suspect SHA out of any tool arg so we can still fall
+            # back even when the agent jumps straight to create_issue without
+            # ever narrating the SHA in plain text.
+            for v in args_dict.values():
+                if isinstance(v, str):
+                    found = _extract_suspect_sha(v)
+                    if found:
+                        last_suspect_sha = found
+                        break
             yield tc
 
         # Tool results
@@ -254,6 +264,10 @@ async def _real_run(
             response = getattr(r, "response", None)
             preview = _result_preview(response)
             yield ToolResultEvent(name=name, result_preview=preview).to_dict()
+            # Also mine the preview for a 40-hex sha.
+            extracted = _extract_suspect_sha(preview)
+            if extracted:
+                last_suspect_sha = extracted
 
             if name == "create_merge_request":
                 # Treat string-encoded JSON payloads (zereight wrapper) the same.
