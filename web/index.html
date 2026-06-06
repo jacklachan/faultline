@@ -8,20 +8,66 @@
 </head>
 <body>
   <header>
-    <h1>Faultline</h1>
-    <p class="tag">Autonomous incident root-cause investigation, gated by you.</p>
+    <div class="brand">
+      <h1>Faultline</h1>
+      <p class="tag">Autonomous incident root-cause investigation, gated by you.</p>
+    </div>
+    <div class="legend">
+      <span class="pill pill-step">step</span>
+      <span class="pill pill-tool_call">tool call</span>
+      <span class="pill pill-tool_result">result</span>
+      <span class="pill pill-rollback_staged">rollback staged</span>
+      <span class="pill pill-final">final</span>
+    </div>
   </header>
 
   <main>
-    <section id="controls">
-      <button id="start" disabled>Start investigation (phase 5+)</button>
-      <button id="approve" disabled>Approve rollback (phase 7)</button>
-      <span id="status">phase 0 scaffold — UI not wired yet</span>
+    <section id="setup" class="card">
+      <h2>Incident</h2>
+      <form id="setup-form">
+        <label>
+          Alerting service
+          <input
+            name="service"
+            value="faultline-victim-frontend"
+            required
+            spellcheck="false"
+          />
+        </label>
+        <label>
+          Window (min)
+          <input name="window_minutes" type="number" min="1" max="240" value="15" />
+        </label>
+        <label>
+          Scenario hint
+          <select name="scenario">
+            <option value="">(env default)</option>
+            <option value="n_plus_one">n_plus_one — latency creep</option>
+            <option value="slow_query">slow_query — latency creep</option>
+            <option value="bad_dep">bad_dep — 5xx spike</option>
+            <option value="leaky">leaky — memory growth</option>
+          </select>
+        </label>
+        <label>
+          GitLab project
+          <input name="project_id" placeholder="(uses .env default)" spellcheck="false" />
+        </label>
+        <div class="row">
+          <button id="start" type="submit">Start investigation</button>
+          <button id="reset" type="button">Reset</button>
+          <span id="status" class="muted">idle</span>
+        </div>
+      </form>
     </section>
 
-    <section id="stream">
+    <section id="stream-section" class="card">
       <h2>Investigation stream</h2>
-      <ol id="steps"></ol>
+      <ol id="stream"></ol>
+    </section>
+
+    <section id="rollback-section" class="card hidden">
+      <h2>Pending rollback</h2>
+      <div id="rollback-card"></div>
     </section>
   </main>
 
