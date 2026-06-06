@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -105,5 +107,18 @@ async def approve(rollback_id: str) -> dict[str, Any]:
 
 # Static console mounted last so / does not steal API routes.
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """Force fresh fetches so users do not run with a stale console build."""
+
+    def file_response(self, *args, **kwargs) -> Response:  # type: ignore[override]
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+
+
 if _WEB_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
+    app.mount("/", _NoCacheStaticFiles(directory=str(_WEB_DIR), html=True), name="web")

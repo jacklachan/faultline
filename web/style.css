@@ -172,15 +172,66 @@ button:not(:disabled):hover { border-color: var(--accent); }
 #explain {
   margin: 0 2rem 1rem;
 }
-#explain ol {
-  margin: 0.5rem 0 0.5rem 0;
-  padding-left: 1.25rem;
+.explain-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 1.5rem;
 }
-#explain ol li {
-  margin: 0.4rem 0;
+@media (max-width: 900px) {
+  .explain-grid { grid-template-columns: 1fr; }
+}
+.explain-grid > div { display: flex; flex-direction: column; gap: 0.5rem; }
+#explain h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+#explain p {
+  margin: 0;
   color: var(--fg);
+  line-height: 1.65;
 }
-#explain ol li code, #explain p code {
+#explain p.muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+#explain p.note {
+  border-left: 2px solid var(--accent);
+  padding-left: 0.6rem;
+  margin-top: 0.5rem;
+}
+#explain ol.flow {
+  margin: 0;
+  padding-left: 1.25rem;
+  counter-reset: flow;
+}
+#explain ol.flow li {
+  list-style: none;
+  position: relative;
+  margin: 0.5rem 0;
+  padding-left: 1.6rem;
+  color: var(--fg);
+  line-height: 1.5;
+}
+#explain ol.flow li::before {
+  counter-increment: flow;
+  content: counter(flow);
+  position: absolute;
+  left: 0;
+  top: 0.05rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#explain code {
   background: #010409;
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
@@ -193,7 +244,6 @@ button:not(:disabled):hover { border-color: var(--accent); }
   border-bottom: 1px dashed var(--info);
 }
 #explain a:hover { border-bottom-style: solid; }
-.explain h2 { color: var(--accent); }
 
 .empty {
   padding: 1rem;

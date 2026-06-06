@@ -3,14 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Faultline — Live Incident Investigator</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
   <header>
     <div class="brand">
       <h1>Faultline</h1>
-      <p class="tag">Autonomous incident root-cause investigation, gated by you.</p>
+      <p class="tag">Production breaks. On-call wastes 10 minutes finding which service is at fault and which commit caused it. Faultline does it in 60 seconds.</p>
     </div>
     <div class="legend">
       <span class="pill pill-step" title="A narration line from the agent (a step of its 8-step policy)">step</span>
@@ -22,15 +25,40 @@
   </header>
 
   <section id="explain" class="card explain">
-    <h2>What you are looking at</h2>
-    <ol>
-      <li><strong>Pick an alerting service</strong> on the left (default <code>faultline-victim-frontend</code>). The scenario hint tells the agent what symptom class to expect when telemetry quota throttles.</li>
-      <li>Click <strong>Start investigation</strong>. The Faultline agent (Gemini 2.5 Flash on Vertex AI, orchestrated by Google ADK) runs an 8-step policy: reads Cloud Monitoring metrics, walks the service dependency graph, queries the GitLab MCP server for recent commits, reads the suspect diff, and explains the causal chain.</li>
-      <li>Cards stream in live as the agent reasons. <em>This takes ~30-90s for a real run</em> because each Vertex AI call + MCP roundtrip is a real network hop.</li>
-      <li>When the agent identifies the offending commit, it opens a postmortem issue and stages a <strong>DRAFT rollback MR</strong> in GitLab. The rollback card appears at the bottom-left with an <strong>Approve</strong> button.</li>
-      <li>Click <strong>Approve</strong>. The server strips the <code>Draft:</code> prefix and merges the MR via GitLab REST. The victim recovers.</li>
-    </ol>
-    <p class="muted">The agent <strong>never</strong> merges on its own. A human always clicks Approve. <a href="https://github.com/jacklachan/faultline/blob/main/agent/prompt.py" target="_blank" rel="noopener">See the policy &rarr;</a></p>
+    <div class="explain-grid">
+      <div>
+        <h2>The idea</h2>
+        <p>
+          When a service breaks, the on-call's first ten minutes are mechanical:
+          <em>which</em> service is the real root, <em>which</em> commit caused it,
+          <em>where</em> is the rollback. Faultline automates that triage. It runs a
+          fixed 8-step investigation policy, reads Google Cloud telemetry + GitLab
+          commits, names the offending commit, drafts the postmortem, and stages a
+          DRAFT rollback merge request. Then it stops. You review and click Approve.
+          The merge fires GitLab CI and the service recovers.
+        </p>
+        <p class="muted">
+          Reasoning: <strong>Gemini 2.5 Flash on Vertex AI</strong>.
+          Orchestration: <strong>Google ADK</strong>.
+          GitLab integration: <strong>load-bearing MCP server</strong> (`@zereight/mcp-gitlab` via stdio).
+          Observability: <strong>Cloud Logging / Trace / Monitoring</strong>.
+          <a href="https://github.com/jacklachan/faultline/blob/main/agent/prompt.py" target="_blank" rel="noopener">See the policy &rarr;</a>
+        </p>
+      </div>
+      <div>
+        <h2>The flow</h2>
+        <ol class="flow">
+          <li><strong>Pick</strong> alerting service + scenario hint on the left.</li>
+          <li><strong>Start investigation.</strong> Agent runs 8-step policy live. Cards stream in. ~30-90s.</li>
+          <li><strong>Agent finds</strong> the suspect commit, opens GitLab issue, stages DRAFT rollback MR.</li>
+          <li><strong>You review</strong> the issue + MR (links appear in the rollback card).</li>
+          <li><strong>Approve.</strong> Faultline merges the MR via GitLab. Service recovers.</li>
+        </ol>
+        <p class="muted note">
+          The agent <strong>never</strong> merges on its own. A human always clicks Approve.
+        </p>
+      </div>
+    </div>
   </section>
 
   <main>
@@ -95,6 +123,6 @@
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
