@@ -1,14 +1,14 @@
 """Victim data service.
 
 Returns a tiny JSON payload. This is the leaf of the chain and the most
-common place we plant regressions (see regressions.py).
+common place we plant regressions (see regressions.py + items_query.py).
 """
 
 from __future__ import annotations
 
 from fastapi import FastAPI
 
-from . import regressions
+from . import items_query, regressions
 from .telemetry import init_telemetry, instrument_app
 
 
@@ -22,15 +22,15 @@ def create_app() -> FastAPI:
 
     @app.get("/items")
     async def items() -> dict[str, object]:
+        # Regression hooks fire before the query so symptoms like 5xx /
+        # crashloop / memory growth surface immediately.
         await regressions.apply_data_regression()
-        return {
-            "items": [
-                {"id": 1, "name": "alpha"},
-                {"id": 2, "name": "beta"},
-                {"id": 3, "name": "gamma"},
-            ],
-            "regression_mode": regressions.current_mode() or None,
-        }
+        mode = regressions.current_mode()
+        if mode == "n_plus_one":
+            payload = await items_query.fetch_items_n_plus_one()
+        else:
+            payload = await items_query.fetch_items_batched()
+        return {"items": payload, "regression_mode": mode or None}
 
     instrument_app(app)
     return app

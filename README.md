@@ -20,27 +20,49 @@ Built for the **Google Cloud Rapid Agent Hackathon — GitLab track**.
 ## Architecture
 
 ```
-+--------------------+        +----------------------+        +------------------+
-|  Web console (SSE) | <----- |  FastAPI server      | -----> |  Vertex AI       |
-|  web/index.html    |        |  server/main.py      |        |  Gemini + ADK    |
-+--------------------+        +----------------------+        +------------------+
-                                        |                              |
-                                        |                       +------+-------+
-                                        |                       | GitLab MCP   |
-                                        |                       | toolset      |
-                                        |                       +------+-------+
-                                        v                              v
-                              +-------------------+          +-------------------+
-                              |  Cloud Logging /  |          |   GitLab repo     |
-                              |  Trace / Monitor  |          |  (victim_service) |
-                              +-------------------+          +-------------------+
-                                        ^
-                                        |  OpenTelemetry
-                              +-------------------+
-                              |  victim_service   |
-                              |  frontend->auth-> |
-                              |  data (Cloud Run) |
-                              +-------------------+
+   ┌─────────────────────┐        ┌──────────────────────────┐
+   │  Web console (SSE)  │ <───── │  FastAPI server          │
+   │  web/index.html     │ ─────> │  POST /investigate (SSE) │
+   │                     │        │  GET  /pending           │
+   │  Approve button ────┼──────> │  POST /approve/{id}      │
+   └─────────────────────┘        └────────────┬─────────────┘
+                                               │
+                                  ┌────────────┴─────────────┐
+                                  │   ADK LlmAgent           │
+                                  │   gemini-2.5-flash       │
+                                  │   8-step INVESTIGATION   │
+                                  │   _POLICY system prompt  │
+                                  └────────────┬─────────────┘
+                                               │
+                ┌──────────────────────────────┼──────────────────────────────┐
+                │                              │                              │
+                ▼                              ▼                              ▼
+    ┌──────────────────────┐    ┌───────────────────────────┐    ┌──────────────────────────┐
+    │ telemetry tools      │    │ GitLab McpToolset         │    │ /approve action (REST)   │
+    │ (function tools)     │    │ Streamable HTTP +         │    │ PUT mr (title strip)     │
+    │   query_error_logs   │    │ PRIVATE-TOKEN header      │    │ PUT mr/merge             │
+    │   read_metric        │    │   search                  │    └────────────┬─────────────┘
+    │   fetch_traces       │    │   get_mr_diffs            │                 │
+    │   list_dep_edges     │    │   create_issue            │                 │
+    └──────────┬───────────┘    │   create_merge_request    │                 │
+               │                └─────────────┬─────────────┘                 │
+               ▼                              ▼                               ▼
+    ┌────────────────────┐         ┌──────────────────────┐        ┌────────────────────┐
+    │ Cloud Logging /    │         │ GitLab project       │ <──────│ MR merged →        │
+    │ Trace / Monitoring │         │   victim_service     │        │ .gitlab-ci.yml     │
+    └──────────┬─────────┘         │   on gitlab.com      │        │ redeploys victim   │
+               ▲                   └──────────────────────┘        └─────────┬──────────┘
+               │ OpenTelemetry                                                │
+               │                                                              ▼
+    ┌──────────┴────────────────────────────────────────────────────────────────────┐
+    │  victim_service on Cloud Run  (one image, three roles via SERVICE_NAME env)   │
+    │      frontend  ──HTTP──>  auth                                                 │
+    │      frontend  ──HTTP──>  data  ──>  items_query  (clean | n_plus_one)         │
+    │                                                                                │
+    │  REGRESSION_MODE env var selects the symptom class: n_plus_one | slow_query |  │
+    │  bad_dep | leaky. Flipping it on data is what triggers the incident Faultline  │
+    │  investigates.                                                                 │
+    └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The agent's reasoning runtime is **Gemini on Vertex AI** (mandated by hackathon rules). Orchestration is **Google ADK** (Agent Development Kit). The GitLab integration is **load-bearing** — all commit/diff reads and all issue/MR creation flow through the official GitLab MCP server.
@@ -118,6 +140,89 @@ python -m victim_service.load_gen --url https://faultline-victim-frontend-xxxxx.
 
 The agent's behaviour is governed by a fixed 8-step policy baked verbatim into the system prompt at [agent/prompt.py](agent/prompt.py). It does **not** improvise. It always halts before merging.
 
+## Demo runbook
+
+End-to-end loop in under a minute. Steps run from the repo root unless noted.
+
+### 0. one-time setup
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+notepad .env   # fill in GOOGLE_CLOUD_PROJECT, GITLAB_PROJECT_PATH, GITLAB_TOKEN
+gcloud auth application-default login
+gcloud services enable aiplatform.googleapis.com run.googleapis.com `
+  cloudbuild.googleapis.com artifactregistry.googleapis.com `
+  logging.googleapis.com cloudtrace.googleapis.com monitoring.googleapis.com
+```
+
+### 1. deploy the victim (clean)
+
+```bash
+bash victim_service/deploy_cloudrun.sh
+```
+
+Note the three Cloud Run URLs the script prints. Put the frontend URL in `.env` as `VICTIM_SERVICE_URL`.
+
+### 2. de-risk the GitLab MCP wiring
+
+```bash
+python -m scripts.gitlab_smoke
+```
+
+Confirms `search`, `get_merge_request_diffs`, `create_issue`, and `create_merge_request` all work against your project. Creates a `[faultline-smoke]` issue + DRAFT MR you can close.
+
+### 3. start the Faultline server
+
+```bash
+uvicorn server.main:app --host 0.0.0.0 --port 8080
+```
+
+Open `http://localhost:8080` — you should see the console.
+
+### 4. plant the regression
+
+In another shell:
+
+```bash
+python -m scripts.plant_regression --scenario n_plus_one
+```
+
+This commits + merges `perf(data): tune query path for n_plus_one workload` to your victim repo, then `gcloud run services update`s the data service with `REGRESSION_MODE=n_plus_one`. Latency on `data` starts climbing immediately.
+
+### 5. drive traffic
+
+```bash
+python -m victim_service.load_gen --url <frontend Cloud Run URL>/ --rps 5 --duration 180
+```
+
+### 6. investigate
+
+In the web console (or via `curl -N -X POST -d '{"service":"faultline-victim-frontend"}'`), kick off an investigation. Watch the agent:
+
+* read error rate + latency metrics on `frontend`,
+* walk the dep graph and switch focus to `data`,
+* find your `perf(data): tune query path...` commit,
+* explain why the diff fits the latency-creep symptom,
+* open a postmortem issue + DRAFT rollback MR,
+* stop and surface the Approve button.
+
+### 7. approve
+
+Click **Approve rollback** in the console. Faultline strips the `Draft:` prefix, merges the MR, and the victim's `.gitlab-ci.yml` redeploys the reverted code to Cloud Run. The load generator's error rate / p95 should drop back to baseline within ~1 minute.
+
+### Troubleshooting
+
+| symptom                                  | likely fix                                                    |
+|------------------------------------------|---------------------------------------------------------------|
+| `GOOGLE_CLOUD_PROJECT is not set`        | edit `.env`, restart the server                               |
+| Stream stops immediately, error event    | `gcloud auth application-default login` not run               |
+| `gitlab_smoke` fails on `create_issue`   | token missing `api` scope, or wrong `GITLAB_PROJECT_PATH`     |
+| `/approve` returns 502 "pipeline must succeed" | open the merge-request page, fix the CI job, retry      |
+| Demo-only, no GCP / GitLab access        | set `FAULTLINE_FAKE_AGENT=1` and `FAULTLINE_FAKE_TELEMETRY=1` |
+
 ## Build phases
 
 - [x] **Phase 0** — scaffold, MIT license, env contract, README skeleton.
@@ -127,8 +232,8 @@ The agent's behaviour is governed by a fixed 8-step policy baked verbatim into t
 - [x] **Phase 4** — Gemini ADK `LlmAgent` factory wiring `gemini-2.5-flash` on Vertex AI + `INVESTIGATION_POLICY` as system prompt + telemetry function tools + GitLab MCP toolset.
 - [x] **Phase 5** — FastAPI server: `POST /investigate` (SSE), `GET /pending`, `POST /approve/{rb}` stub, in-memory rollback registry. `FAULTLINE_FAKE_AGENT=1` switches to a canned step sequence for offline UI dev.
 - [x] **Phase 6** — web console: form-driven incident setup, live SSE stream renders one card per event type, rollback card with deep links to issue + draft MR and an Approve button. Vanilla HTML/JS/CSS, no build step.
-- [ ] Phase 7 — human Approve gate -> merge + redeploy.
-- [ ] Phase 8 — plant regression, end-to-end demo, tests, architecture diagram.
+- [x] **Phase 7** — `POST /approve/{rollback_id}` strips the `Draft:` title prefix and merges the MR via GitLab REST (`PUT /merge_requests/:iid` + `PUT /merge_requests/:iid/merge`). Merge fires the victim's `.gitlab-ci.yml`, which redeploys to Cloud Run. Failure path writes the error back into the registry as `status=failed`.
+- [x] **Phase 8** — `items_query.py` carries the real N+1 vs batched code paths so the suspect commit is a believable refactor diff. `scripts/plant_regression.py` automates the "land the bug" step on the victim GitLab repo. End-to-end fake test covers all four scenarios → staged rollback → approved → merged. Architecture diagram + demo runbook below.
 
 ## Hackathon constraints
 
