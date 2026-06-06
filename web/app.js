@@ -233,60 +233,81 @@
     }
   }
 
-  async function startInvestigation(payload) {
+  let currentSource = null;
+
+  function handleEvent(ev) {
+    streamEl.appendChild(makeRow(ev));
+    streamEl.lastElementChild.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (ev.type === "tool_call") setStatus(`calling ${ev.name}…`, "running");
+    if (ev.type === "tool_result") setStatus(`${ev.name} returned — agent reasoning`, "running");
+    if (ev.type === "rollback_staged") {
+      showRollback(ev);
+      setStatus("rollback staged — review and Approve below", "done");
+    }
+    if (ev.type === "final") setStatus("investigation complete", "done");
+    if (ev.type === "error") setStatus("error: " + (ev.message || "see card below"), "error");
+  }
+
+  function startInvestigation(payload) {
     clearStream();
     if (emptyStream) emptyStream.classList.add("hidden");
-    setStatus("opening stream… (Vertex AI cold-starts can take 20-40s)", "running");
+    setStatus("opening stream…", "running");
     startElapsed();
     startBtn.disabled = true;
-    currentAbort = new AbortController();
 
-    try {
-      const r = await fetch("/investigate", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "text/event-stream" },
-        body: JSON.stringify(payload),
-        signal: currentAbort.signal,
-      });
-      if (!r.ok) {
-        const body = await r.text();
-        throw new Error("HTTP " + r.status + ": " + body.slice(0, 200));
-      }
+    // Native EventSource (GET) is the most reliable SSE path: proxies do
+    // not hold the response, browsers do not buffer it, and reconnection
+    // is automatic.
+    const qs = new URLSearchParams({
+      service: payload.service,
+      window_minutes: String(payload.window_minutes),
+    });
+    if (payload.scenario) qs.set("scenario", payload.scenario);
+    if (payload.project_id) qs.set("project_id", payload.project_id);
+
+    if (currentSource) currentSource.close();
+    const es = new EventSource(`/investigate?${qs.toString()}`);
+    currentSource = es;
+
+    es.addEventListener("ready", () => {
       setStatus("agent is investigating — first event will appear below", "running");
-      let sawAnything = false;
-      for await (const ev of sseEvents(r)) {
-        sawAnything = true;
-        streamEl.appendChild(makeRow(ev));
-        streamEl.lastElementChild.scrollIntoView({ behavior: "smooth", block: "end" });
-        if (ev.type === "tool_call") {
-          setStatus(`calling ${ev.name}…`, "running");
-        }
-        if (ev.type === "tool_result") {
-          setStatus(`${ev.name} returned — agent reasoning`, "running");
-        }
-        if (ev.type === "rollback_staged") {
-          showRollback(ev);
-          setStatus("rollback staged — review and Approve below", "done");
-        }
-        if (ev.type === "final") {
-          setStatus(sawAnything ? "investigation complete" : "no events received", "done");
-        }
-        if (ev.type === "error") {
-          setStatus("error: " + (ev.message || "see card below"), "error");
-        }
+    });
+
+    const handler = (e) => {
+      try {
+        handleEvent(JSON.parse(e.data));
+      } catch (err) {
+        console.warn("bad SSE event", e.data, err);
       }
-    } catch (err) {
-      if (err.name === "AbortError") {
-        setStatus("cancelled", "idle");
-      } else {
-        setStatus("error: " + err.message, "error");
-        console.error(err);
-      }
-    } finally {
+    };
+    [
+      "step",
+      "tool_call",
+      "tool_result",
+      "rollback_staged",
+      "final",
+      "error",
+    ].forEach((t) => es.addEventListener(t, handler));
+
+    es.addEventListener("final", () => {
+      es.close();
+      currentSource = null;
       startBtn.disabled = false;
-      currentAbort = null;
       stopElapsed();
-    }
+    });
+    es.addEventListener("error", (e) => {
+      // EventSource fires `error` on the connection itself when the server
+      // closes the stream. We do not want to flag that as an investigation
+      // error — only flag if no events ever arrived.
+      if (es.readyState === EventSource.CLOSED) {
+        if (!streamEl.children.length) {
+          setStatus("connection closed before any events", "error");
+        }
+        startBtn.disabled = false;
+        currentSource = null;
+        stopElapsed();
+      }
+    });
   }
 
   form.addEventListener("submit", (e) => {
@@ -304,9 +325,14 @@
   });
 
   resetBtn.addEventListener("click", () => {
-    if (currentAbort) currentAbort.abort();
+    if (currentSource) {
+      currentSource.close();
+      currentSource = null;
+    }
+    stopElapsed();
     clearStream();
     setStatus("idle");
+    startBtn.disabled = false;
   });
 
   setStatus("idle");

@@ -51,26 +51,68 @@ def health() -> dict[str, str]:
     return {"status": "ok", "phase": "5"}
 
 
-@app.post("/investigate")
-async def investigate(req: InvestigateRequest, request: Request) -> EventSourceResponse:
-    """Stream an investigation as Server-Sent Events.
-
-    Each SSE message is a JSON object with at least ``{"type": ...}``. See
-    ``server/events.py`` for the full set of types the UI can render.
-    """
-
+async def _investigate_stream(
+    request: Request,
+    *,
+    service: str,
+    window_minutes: int,
+    scenario: str | None,
+    project_id: str | None,
+) -> EventSourceResponse:
     async def _gen():
+        # Initial padding flushes any intermediate proxy buffer so the browser
+        # sees the stream as live immediately.
+        yield {"event": "ready", "data": json.dumps({"type": "ready"})}
         async for ev in stream_investigation(
-            service=req.service,
-            window_minutes=req.window_minutes,
-            scenario=req.scenario,
-            project_id=req.project_id,
+            service=service,
+            window_minutes=window_minutes,
+            scenario=scenario,
+            project_id=project_id,
         ):
             if await request.is_disconnected():
                 break
             yield {"event": ev.get("type", "message"), "data": json.dumps(ev)}
 
-    return EventSourceResponse(_gen())
+    resp = EventSourceResponse(_gen())
+    # nginx + Envoy honour this; tells proxies not to buffer the response.
+    resp.headers["X-Accel-Buffering"] = "no"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.post("/investigate")
+async def investigate_post(req: InvestigateRequest, request: Request) -> EventSourceResponse:
+    """Stream an investigation as Server-Sent Events (POST form)."""
+    return await _investigate_stream(
+        request,
+        service=req.service,
+        window_minutes=req.window_minutes,
+        scenario=req.scenario,
+        project_id=req.project_id,
+    )
+
+
+@app.get("/investigate")
+async def investigate_get(
+    request: Request,
+    service: str,
+    window_minutes: int = 15,
+    scenario: str | None = None,
+    project_id: str | None = None,
+) -> EventSourceResponse:
+    """Stream an investigation as Server-Sent Events (GET form).
+
+    Provided so the browser can use the native ``EventSource`` API, which is
+    more reliable across proxies + Chrome extensions than POST + fetch
+    streaming.
+    """
+    return await _investigate_stream(
+        request,
+        service=service,
+        window_minutes=window_minutes,
+        scenario=scenario,
+        project_id=project_id,
+    )
 
 
 @app.get("/pending")
