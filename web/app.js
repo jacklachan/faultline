@@ -81,6 +81,12 @@
       const h = document.createElement("strong");
       h.textContent = ev.name + "(...)";
       frag.appendChild(h);
+      if (ev.policy_step) {
+        const tag = document.createElement("div");
+        tag.className = "policy-tag";
+        tag.textContent = "Policy step " + ev.policy_step + " — " + (ev.policy_label || "");
+        frag.appendChild(tag);
+      }
       const pre = document.createElement("pre");
       pre.textContent = JSON.stringify(ev.args || {}, null, 2);
       frag.appendChild(pre);

@@ -202,6 +202,23 @@ async def _real_run(
     last_text = ""
     last_suspect_sha: str | None = None
     mr_create_failed = False
+    deferred_final: dict[str, Any] | None = None
+
+    # Heuristic step labels surfaced as `tool_call.policy_step` so the UI can
+    # show which of the 8 policy steps a given tool call belongs to.
+    POLICY_STEPS = {
+        "read_metric": (1, "Read the incident signal"),
+        "query_error_logs": (1, "Read the incident signal"),
+        "list_dependency_edges": (2, "Find the true source"),
+        "fetch_recent_traces": (2, "Find the true source"),
+        "list_commits": (3, "Establish the change window"),
+        "list_merge_requests": (3, "Establish the change window"),
+        "get_merge_request": (4, "Read the suspect diff"),
+        "get_merge_request_diffs": (4, "Read the suspect diff"),
+        "create_issue": (7, "Action: open postmortem issue"),
+        "create_merge_request": (7, "Action: stage DRAFT rollback MR"),
+        "merge_merge_request": (7, "Action: merge rollback MR"),
+    }
 
     async for event in runner.run_async(
         user_id="demo",
@@ -216,7 +233,12 @@ async def _real_run(
         for c in calls or []:
             name = getattr(c, "name", "tool")
             args = getattr(c, "args", {}) or {}
-            yield ToolCallEvent(name=name, args=dict(args)).to_dict()
+            tc = ToolCallEvent(name=name, args=dict(args)).to_dict()
+            label = POLICY_STEPS.get(name)
+            if label:
+                tc["policy_step"] = label[0]
+                tc["policy_label"] = label[1]
+            yield tc
 
         # Tool results
         try:
@@ -284,13 +306,21 @@ async def _real_run(
                     last_text = text or last_text
                     if text:
                         last_suspect_sha = _extract_suspect_sha(text) or last_suspect_sha
-                    yield FinalEvent(summary=text.strip() or "Investigation complete.").to_dict()
+                    # Hold the final event. If the post-loop REST fallback
+                    # successfully stages a rollback we want the user to see
+                    # "rollback staged" BEFORE the agent's summary, since the
+                    # summary text usually apologises for not being able to
+                    # create the MR.
+                    deferred_final = FinalEvent(
+                        summary=text.strip() or "Investigation complete."
+                    ).to_dict()
             except Exception:
                 pass
 
     # Fallback: if agent named a suspect but could not stage the MR via MCP,
     # finish the job with a direct GitLab REST revert + draft MR. Step 7 of the
     # policy must complete deterministically.
+    fallback_failed = False
     if not seen_rollback and last_suspect_sha:
         try:
             from .gitlab_actions import open_draft_mr_via_rest, revert_commit_via_rest
@@ -335,9 +365,20 @@ async def _real_run(
             ).to_dict()
         except Exception as exc:
             log.exception("post-investigation REST fallback failed")
+            fallback_failed = True
             yield ErrorEvent(
                 message=f"Could not auto-stage rollback MR: {type(exc).__name__}: {exc}"
             ).to_dict()
+
+    # Emit the final event LAST so the UI sees rollback_staged + verdict before
+    # the agent's summary (which often apologises for the MCP-side failure).
+    if deferred_final is not None:
+        if seen_rollback and not fallback_failed:
+            deferred_final["summary"] = (
+                "Investigation complete. Suspect commit identified and DRAFT "
+                "rollback MR staged in GitLab. Click Approve below to merge."
+            )
+        yield deferred_final
 
 
 # ---------------------------------------------------------------------------

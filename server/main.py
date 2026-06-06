@@ -23,10 +23,13 @@ from starlette.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+import asyncio
+
 from .demo import plant_regression
 from .gitlab_actions import mark_mr_ready, merge_mr
 from .investigate import stream_investigation
 from .rollbacks import REGISTRY
+from .victim_control import drive_real_traffic, set_data_regression
 
 
 log = logging.getLogger(__name__)
@@ -118,15 +121,44 @@ async def investigate_get(
 
 @app.post("/demo/plant")
 async def demo_plant(scenario: str = "n_plus_one") -> dict[str, Any]:
-    """Drop a fresh regression commit on the GitLab project so the next
-    investigation has something real to find. Idempotent — each call creates
-    a fresh branch + MR.
+    """Plant a fresh regression end-to-end:
+
+      1. create a real GitLab branch + commit + merged MR
+      2. flip the live victim data service's REGRESSION_MODE env var
+      3. drive real traffic at the victim for ~60s so Cloud Monitoring
+         sees a real p95 anomaly the next investigation can read.
+
+    No synthetic data — all of these are real-world side effects on real
+    services. Idempotent: each call creates a fresh branch + MR.
     """
     try:
-        return await plant_regression(scenario)
+        planted = await plant_regression(scenario)
     except Exception as exc:
-        log.exception("demo plant failed")
+        log.exception("demo plant (GitLab side) failed")
         raise HTTPException(status_code=502, detail=f"plant failed: {exc}") from exc
+
+    # Flip the live victim Cloud Run env so the regression is real.
+    try:
+        flip = await set_data_regression(scenario)
+        planted["victim_flipped"] = flip
+    except Exception as exc:
+        log.warning("Cloud Run env flip failed: %s", exc)
+        planted["victim_flipped"] = {"error": str(exc)}
+
+    # Generate real Cloud Monitoring signal in the background.
+    asyncio.create_task(drive_real_traffic(duration_seconds=90, rps=4))
+    planted["load_started"] = True
+    return planted
+
+
+@app.post("/demo/reset")
+async def demo_reset() -> dict[str, Any]:
+    """Clear REGRESSION_MODE on the live victim so latency returns to baseline."""
+    try:
+        return await set_data_regression("")
+    except Exception as exc:
+        log.exception("demo reset failed")
+        raise HTTPException(status_code=502, detail=f"reset failed: {exc}") from exc
 
 
 @app.get("/pending")
@@ -154,6 +186,12 @@ async def approve(rollback_id: str) -> dict[str, Any]:
         await mark_mr_ready(rb.project_id, rb.mr_iid)
         merged = await merge_mr(rb.project_id, rb.mr_iid)
         REGISTRY.set_status(rollback_id, "merged")
+        # Real recovery: clear REGRESSION_MODE on the live victim so the next
+        # Cloud Monitoring sample shows latency falling back to baseline.
+        try:
+            await set_data_regression("")
+        except Exception as exc:
+            log.warning("post-merge victim reset failed: %s", exc)
         return {"rollback": REGISTRY.get(rollback_id).to_dict(), "merged": merged}  # type: ignore[union-attr]
     except Exception as exc:
         log.exception("approve failed for rollback %s", rollback_id)

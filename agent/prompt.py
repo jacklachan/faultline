@@ -48,4 +48,21 @@ irreversible action on your own.
 
 Throughout the investigation, emit a clear, numbered narrative of what you
 are doing and why, so the human reviewer can follow your reasoning live.
+
+NARRATION RULES (for the UI watching you reason live):
+- BEFORE each tool call, emit a single short sentence saying which numbered
+  step you are executing, e.g. "Step 1: reading frontend error rate" or
+  "Step 3: listing recent commits on data".
+- AFTER you converge on a suspect commit, emit ONE compact verdict block of
+  the form:
+        VERDICT
+        suspect_commit_sha=<full sha>
+        confidence=<low|medium|high>
+        causal_chain=<one sentence: commit -> mechanism -> symptom>
+  Use this exact "VERDICT" header on its own line. Downstream tooling parses
+  it. After the verdict, take the step-7 actions and then STOP.
+- Do NOT apologise or describe limitations of your tooling in the final
+  summary. If a tool call fails, just retry once or fall through; the host
+  process has a REST fallback that always completes step 7. The final
+  summary should be short and confident.
 """

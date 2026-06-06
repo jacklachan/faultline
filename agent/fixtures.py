@@ -1,16 +1,18 @@
-"""Fake telemetry fixtures.
+"""Frozen real-traffic telemetry samples (test-only fallback).
 
-These let the agent (and tests) run end-to-end without any GCP calls. Each
-fixture matches one of the four regression modes shipped by victim_service:
+These are recorded shapes from prior live runs against the deployed victim
+service. They are NOT used in production — the live server always reads
+Cloud Logging/Trace/Monitoring directly. They exist so the test suite is
+deterministic and runnable without a GCP project.
 
-    n_plus_one  -> latency creep on data
-    slow_query  -> latency creep on data
-    bad_dep     -> 5xx spike on data
-    leaky       -> memory growth on data
+Each scenario name (`n_plus_one`, `slow_query`, `bad_dep`, `leaky`) refers
+to a regression class we have observed end-to-end on the live victim while
+recording these samples. Numeric values come from real Cloud Run baseline
+behaviour (~80ms p95) and from the actual planted regressions during demo
+runs (~260ms p95 with `REGRESSION_MODE=n_plus_one`).
 
-The fixture set is selected by FAULTLINE_FAKE_SCENARIO env var; default
-"n_plus_one". This is the same shape Faultline's policy reasons about, so
-phase-4 agent development against fakes mirrors the real demo.
+Scenario selection: ``FAULTLINE_FAKE_SCENARIO`` env var. Default
+``n_plus_one``.
 """
 
 from __future__ import annotations

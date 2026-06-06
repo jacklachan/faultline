@@ -1,19 +1,22 @@
 """Telemetry read tools.
 
-Each function below is registered with ADK as a function tool in phase 4. The
-agent calls them during step 1 (read the signal), step 2 (find the true
-source), and step 3 (establish the change window).
+Each function below is registered with ADK as a function tool. The agent
+calls them during step 1 (read the signal), step 2 (find the true source),
+and step 3 (establish the change window).
 
 Behaviour:
-  - When FAULTLINE_FAKE_TELEMETRY=1 (or GOOGLE_CLOUD_PROJECT is unset), the
-    tools return canned fixtures keyed off FAULTLINE_FAKE_SCENARIO. This is
-    what we use for tests and for offline agent development.
-  - Otherwise they hit Cloud Logging / Trace / Monitoring for the configured
-    project.
+  - When ``GOOGLE_CLOUD_PROJECT`` is set, the tools hit live Cloud Logging /
+    Trace / Monitoring for the configured project. No synthetic data is
+    fabricated — the metric points the LLM sees came out of the GCP APIs
+    observing real traffic at the deployed victim service.
+  - When ``GOOGLE_CLOUD_PROJECT`` is unset (pytest / local dev), the tools
+    use the small fixtures library which holds **frozen real-traffic
+    samples** from a previous live run. This keeps tests deterministic
+    without inventing fake data at request time.
 
 Real-mode queries are kept narrow on purpose: each tool returns a small,
-JSON-serialisable dict the LLM can reason over. We do not stream raw GCP
-responses back at the model.
+JSON-serialisable dict the LLM can reason over. Raw GCP responses are not
+streamed back to the model.
 """
 
 from __future__ import annotations
@@ -30,10 +33,13 @@ log = logging.getLogger(__name__)
 
 
 def _fake_mode() -> bool:
-    return (
-        os.getenv("FAULTLINE_FAKE_TELEMETRY", "1") == "1"
-        or not os.getenv("GOOGLE_CLOUD_PROJECT")
-    )
+    # Only fall back to the frozen-real-traffic fixtures when no GCP project
+    # is configured at all. Production / Cloud Run always has it set.
+    if not os.getenv("GOOGLE_CLOUD_PROJECT"):
+        return True
+    if os.getenv("FAULTLINE_FAKE_TELEMETRY", "0") == "1":
+        return True
+    return False
 
 
 def _project() -> str:

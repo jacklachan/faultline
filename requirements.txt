@@ -11,6 +11,9 @@ mcp>=1.0.0
 google-cloud-logging>=3.10.0
 google-cloud-trace>=1.13.0
 google-cloud-monitoring>=2.21.0
+# Cloud Run admin SDK so /demo/plant + /approve can flip the live victim
+# data service's REGRESSION_MODE env var. No synthetic anomaly fallback.
+google-cloud-run>=0.10.0
 
 # --- FastAPI server + streaming --------------------------------------------
 fastapi>=0.111.0
