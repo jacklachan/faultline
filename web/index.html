@@ -13,13 +13,25 @@
       <p class="tag">Autonomous incident root-cause investigation, gated by you.</p>
     </div>
     <div class="legend">
-      <span class="pill pill-step">step</span>
-      <span class="pill pill-tool_call">tool call</span>
-      <span class="pill pill-tool_result">result</span>
-      <span class="pill pill-rollback_staged">rollback staged</span>
-      <span class="pill pill-final">final</span>
+      <span class="pill pill-step" title="A narration line from the agent (a step of its 8-step policy)">step</span>
+      <span class="pill pill-tool_call" title="The agent called one of its tools">tool call</span>
+      <span class="pill pill-tool_result" title="The tool returned (Cloud Monitoring metrics, GitLab MCP, etc.)">result</span>
+      <span class="pill pill-rollback_staged" title="A DRAFT rollback MR was staged in GitLab. Approve below to merge.">rollback staged</span>
+      <span class="pill pill-final" title="Final summary from the agent">final</span>
     </div>
   </header>
+
+  <section id="explain" class="card explain">
+    <h2>What you are looking at</h2>
+    <ol>
+      <li><strong>Pick an alerting service</strong> on the left (default <code>faultline-victim-frontend</code>). The scenario hint tells the agent what symptom class to expect when telemetry quota throttles.</li>
+      <li>Click <strong>Start investigation</strong>. The Faultline agent (Gemini 2.5 Flash on Vertex AI, orchestrated by Google ADK) runs an 8-step policy: reads Cloud Monitoring metrics, walks the service dependency graph, queries the GitLab MCP server for recent commits, reads the suspect diff, and explains the causal chain.</li>
+      <li>Cards stream in live as the agent reasons. <em>This takes ~30-90s for a real run</em> because each Vertex AI call + MCP roundtrip is a real network hop.</li>
+      <li>When the agent identifies the offending commit, it opens a postmortem issue and stages a <strong>DRAFT rollback MR</strong> in GitLab. The rollback card appears at the bottom-left with an <strong>Approve</strong> button.</li>
+      <li>Click <strong>Approve</strong>. The server strips the <code>Draft:</code> prefix and merges the MR via GitLab REST. The victim recovers.</li>
+    </ol>
+    <p class="muted">The agent <strong>never</strong> merges on its own. A human always clicks Approve. <a href="https://github.com/jacklachan/faultline/blob/main/agent/prompt.py" target="_blank" rel="noopener">See the policy &rarr;</a></p>
+  </section>
 
   <main>
     <section id="setup" class="card">
@@ -27,6 +39,7 @@
       <form id="setup-form">
         <label>
           Alerting service
+          <span class="hint">Cloud Run service name that is alerting (start with the user-facing one)</span>
           <input
             name="service"
             value="faultline-victim-frontend"
@@ -36,10 +49,12 @@
         </label>
         <label>
           Window (min)
+          <span class="hint">how many minutes back to look</span>
           <input name="window_minutes" type="number" min="1" max="240" value="15" />
         </label>
         <label>
           Scenario hint
+          <span class="hint">used only if Cloud Trace quota throttles real telemetry reads</span>
           <select name="scenario">
             <option value="">(env default)</option>
             <option value="n_plus_one">n_plus_one — latency creep</option>
@@ -50,23 +65,32 @@
         </label>
         <label>
           GitLab project
+          <span class="hint">leave blank to use the server's .env default</span>
           <input name="project_id" placeholder="(uses .env default)" spellcheck="false" />
         </label>
         <div class="row">
           <button id="start" type="submit">Start investigation</button>
           <button id="reset" type="button">Reset</button>
+        </div>
+        <div class="status-row">
           <span id="status" class="muted">idle</span>
+          <span id="elapsed" class="muted"></span>
         </div>
       </form>
     </section>
 
     <section id="stream-section" class="card">
       <h2>Investigation stream</h2>
+      <div id="empty-stream" class="empty">
+        <p>No investigation yet. Click <strong>Start investigation</strong> on the left.</p>
+        <p class="muted">Expect 8 policy steps, ~10 tool calls (read_metric, list_dependency_edges, list_commits, get_merge_request_diffs, create_issue, create_merge_request), and a final rollback_staged event with a link to the Draft MR.</p>
+      </div>
       <ol id="stream"></ol>
     </section>
 
     <section id="rollback-section" class="card hidden">
       <h2>Pending rollback</h2>
+      <p class="muted">Agent has identified the suspect commit and staged a DRAFT rollback merge request. Review the links below, then click <strong>Approve</strong>.</p>
       <div id="rollback-card"></div>
     </section>
   </main>

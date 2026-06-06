@@ -18,6 +18,10 @@
   const rollbackCard = document.getElementById("rollback-card");
 
   let currentAbort = null;
+  let startedAt = null;
+  let elapsedTimer = null;
+  const elapsedEl = document.getElementById("elapsed");
+  const emptyStream = document.getElementById("empty-stream");
 
   function setStatus(text, kind) {
     statusEl.textContent = text;
@@ -28,6 +32,23 @@
     streamEl.innerHTML = "";
     rollbackCard.innerHTML = "";
     rollbackSection.classList.add("hidden");
+    if (emptyStream) emptyStream.classList.remove("hidden");
+  }
+
+  function startElapsed() {
+    startedAt = Date.now();
+    if (elapsedTimer) clearInterval(elapsedTimer);
+    elapsedTimer = setInterval(() => {
+      const s = Math.floor((Date.now() - startedAt) / 1000);
+      if (elapsedEl) elapsedEl.textContent = `t+${s}s`;
+    }, 1000);
+  }
+
+  function stopElapsed() {
+    if (elapsedTimer) {
+      clearInterval(elapsedTimer);
+      elapsedTimer = null;
+    }
   }
 
   function makeRow(ev) {
@@ -214,7 +235,9 @@
 
   async function startInvestigation(payload) {
     clearStream();
-    setStatus("connecting…", "running");
+    if (emptyStream) emptyStream.classList.add("hidden");
+    setStatus("opening stream… (Vertex AI cold-starts can take 20-40s)", "running");
+    startElapsed();
     startBtn.disabled = true;
     currentAbort = new AbortController();
 
@@ -229,18 +252,27 @@
         const body = await r.text();
         throw new Error("HTTP " + r.status + ": " + body.slice(0, 200));
       }
-      setStatus("investigating…", "running");
+      setStatus("agent is investigating — first event will appear below", "running");
+      let sawAnything = false;
       for await (const ev of sseEvents(r)) {
+        sawAnything = true;
         streamEl.appendChild(makeRow(ev));
         streamEl.lastElementChild.scrollIntoView({ behavior: "smooth", block: "end" });
+        if (ev.type === "tool_call") {
+          setStatus(`calling ${ev.name}…`, "running");
+        }
+        if (ev.type === "tool_result") {
+          setStatus(`${ev.name} returned — agent reasoning`, "running");
+        }
         if (ev.type === "rollback_staged") {
           showRollback(ev);
+          setStatus("rollback staged — review and Approve below", "done");
         }
         if (ev.type === "final") {
-          setStatus("done — awaiting approval", "done");
+          setStatus(sawAnything ? "investigation complete" : "no events received", "done");
         }
         if (ev.type === "error") {
-          setStatus("error", "error");
+          setStatus("error: " + (ev.message || "see card below"), "error");
         }
       }
     } catch (err) {
@@ -253,6 +285,7 @@
     } finally {
       startBtn.disabled = false;
       currentAbort = null;
+      stopElapsed();
     }
   }
 

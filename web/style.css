@@ -152,6 +152,59 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .status-error   { color: var(--err); }
 .status-idle    { color: var(--muted); }
 
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+}
+
+#elapsed { color: var(--accent); font-size: 0.8rem; }
+
+#setup-form label .hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-style: italic;
+  margin-bottom: 0.1rem;
+}
+
+#explain {
+  margin: 0 2rem 1rem;
+}
+#explain ol {
+  margin: 0.5rem 0 0.5rem 0;
+  padding-left: 1.25rem;
+}
+#explain ol li {
+  margin: 0.4rem 0;
+  color: var(--fg);
+}
+#explain ol li code, #explain p code {
+  background: #010409;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 0.85em;
+}
+#explain a {
+  color: var(--info);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--info);
+}
+#explain a:hover { border-bottom-style: solid; }
+.explain h2 { color: var(--accent); }
+
+.empty {
+  padding: 1rem;
+  border: 1px dashed var(--panel-border);
+  border-radius: 6px;
+  background: #0d1117;
+  text-align: left;
+}
+.empty p { margin: 0.3rem 0; color: var(--fg); }
+.empty.hidden { display: none; }
+
 /* --- stream --- */
 
 #stream {
