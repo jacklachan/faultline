@@ -4,7 +4,7 @@
 
 When a production service breaks, on-call wastes minutes paging through dashboards just to figure out *which* service is the root cause and *which commit* caused it. **Faultline** is an autonomous Gemini agent that does that triage in seconds: it reads Google Cloud telemetry, walks the service dependency graph to the real source of the cascade, correlates the failure window with recent GitLab commits, names the suspect, drafts the postmortem, and stages a one-click rollback merge request. Then it stops — a human still approves before anything merges.
 
-Built on Gemini 2.5 Flash + Google ADK + the official GitLab MCP server + Cloud Run + Cloud Logging/Trace/Monitoring. Original code, MIT, in a public repo with the license committed in the first commit.
+Built on Gemini 3.1 Pro (preview) + Google ADK + the community `@zereight/mcp-gitlab` MCP server + Cloud Run + Cloud Logging/Trace/Monitoring. Original code, MIT, in a public repo with the license committed in the first commit.
 
 ---
 
