@@ -222,7 +222,8 @@ async def revert_commit_via_rest(project_path: str, sha: str, branch: str) -> di
             applied = False
             for payload in ({"branch": branch, "mainline": 1}, {"branch": branch}):
                 resp = await client.post(revert_url, headers=_headers(), json=payload)
-                if resp.status_code == 200:
+                # GitLab returns 200 OR 201 for a successful revert commit.
+                if resp.status_code in (200, 201):
                     result = resp.json()
                     result["_picked_sha"] = cand_sha
                     result["_picked_reason"] = reason
