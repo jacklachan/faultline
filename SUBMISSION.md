@@ -1,10 +1,16 @@
 # Faultline — Google Cloud Rapid Agent Hackathon submission (GitLab track)
 
+## The one sentence
+
+**Faultline ranks suspect commits by how well the change *type* explains the symptom *type* — not by recency, not by fuzzy similarity, not by who shipped last — and that single reasoning step turns the agent's output from a list of recent merges into a verdict.**
+
 ## 30-second pitch
 
-When a production service breaks, on-call wastes minutes paging through dashboards just to figure out *which* service is the root cause and *which commit* caused it. **Faultline** is an autonomous Gemini agent that does that triage in seconds: it reads Google Cloud telemetry, walks the service dependency graph to the real source of the cascade, correlates the failure window with recent GitLab commits, names the suspect, drafts the postmortem, and stages a one-click rollback merge request. Then it stops — a human still approves before anything merges.
+When a production service breaks, the on-call's first ten minutes are a guessing game between three thousand recent commits. Faultline collapses that to one. It reads Google Cloud telemetry to identify the *kind* of failure — latency creep, sudden 5xx spike, OOM crashloop — then asks the GitLab MCP server for recent diffs and ranks them by how well each change *type* causally explains the symptom *type*. Latency creep matches a commit that added a query loop, not a method rename. A 5xx spike matches a new dependency or auth change, not a docs edit. OOM matches a pool or allocation change. That's step five of the eight-step policy baked into the system prompt and it is the difference between a noisy auto-RCA tool and an agent that names the offender. The agent then drafts the postmortem, opens a Draft rollback merge request, and stops. A human clicks Approve.
 
 Built on Gemini 3.1 Pro (preview) + Google ADK + the community `@zereight/mcp-gitlab` MCP server + Cloud Run + Cloud Logging/Trace/Monitoring. Original code, MIT, in a public repo with the license committed in the first commit.
+
+> *Why this matters in the GitLab track:* most GitLab-track entries auto-review code or auto-rollback on alert. Both are useful and both are crowded. Faultline's contribution is the **reasoning step in between** — explicitly modeling the causal fit between symptom class and change class so the agent does not just react to alerts but actually picks the right commit.
 
 ---
 
@@ -108,6 +114,10 @@ That single button creates a fresh real GitLab commit, fresh real Draft MR, runs
 
 See [DEMO.md](DEMO.md) for the 3-minute scripted walkthrough.
 
+## Team / authorship
+
+Built solo by **Mohit Jain**. GitHub `jacklachan`, GitLab `mohitlalith07`. Same person across the two platforms — the GitHub username is older.
+
 ## License
 
-MIT © 2026 mohit
+MIT © 2026 Mohit Jain

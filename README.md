@@ -285,4 +285,4 @@ Click **Approve rollback** in the console. Faultline strips the `Draft:` prefix,
 
 ## License
 
-[MIT](LICENSE) © 2026 mohit
+[MIT](LICENSE) © 2026 Mohit Jain — GitHub: [@jacklachan](https://github.com/jacklachan) · GitLab: [@mohitlalith07](https://gitlab.com/mohitlalith07)
