@@ -38,7 +38,7 @@ When a production service breaks, Faultline autonomously:
                                                │
                                   ┌────────────┴─────────────┐
                                   │   ADK LlmAgent           │
-                                  │   gemini-2.5-flash       │
+                                  │   gemini-3.1-pro-preview │
                                   │   8-step INVESTIGATION   │
                                   │   _POLICY system prompt  │
                                   └────────────┬─────────────┘

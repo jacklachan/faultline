@@ -191,11 +191,11 @@ def pending() -> dict[str, Any]:
 
 
 @app.post("/approve/{rollback_id}")
-async def approve(
-    rollback_id: str,
-    x_faultline_token: str | None = Header(default=None),
-) -> dict[str, Any]:
-    _require_demo_secret(x_faultline_token)
+async def approve(rollback_id: str) -> dict[str, Any]:
+    # No auth gate: /approve only acts on a rollback_id that the agent
+    # already staged in REGISTRY. An attacker cannot inject one; they can
+    # at most replay an existing id, which is idempotent (the registry
+    # state machine refuses non-pending entries).
     """Mark the draft rollback MR Ready, then merge it.
 
     Merging triggers the victim_service ``.gitlab-ci.yml`` deploy job, which

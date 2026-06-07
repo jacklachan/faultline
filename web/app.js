@@ -195,7 +195,7 @@
   async function approveRollback(rollbackId, btn) {
     btn.disabled = true;
     const note = document.getElementById("approve-status");
-    note.textContent = "merging via GitLab MCP...";
+    note.textContent = "merging via GitLab REST...";
     try {
       const r = await fetch("/approve/" + encodeURIComponent(rollbackId), {
         method: "POST",

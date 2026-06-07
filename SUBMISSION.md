@@ -39,7 +39,7 @@ The web console renders each step live as the agent emits it. When the human cli
 |---|---|---|
 | Reasoning LLM | **Gemini 3.1 Pro (preview)** on Vertex AI | hackathon rule 1 (Gemini 3 hackathon); 3.1 Pro is the reasoning-tier model the spotlight calls out. Override via `VERTEX_AI_MODEL` env (e.g. `gemini-3-flash`) for cost-sensitive runs |
 | Orchestration | **Google ADK** (`google-adk` Python) | hackathon rule 2; ADK's `McpToolset` is what connects us to GitLab |
-| Partner integration | **GitLab MCP server** via ADK `McpToolset` + stdio. Community `@zereight/mcp-gitlab` (the de-facto GitLab MCP for free-tier projects — GitLab's own MCP endpoint at `<gitlab>/api/v4/mcp` is Ultimate-tier on group namespaces only). | hackathon rule 3; both reads (commits/diffs) and writes (issue/MR/merge) flow through MCP |
+| Partner integration | **GitLab MCP server** via ADK `McpToolset` + stdio. Community `@zereight/mcp-gitlab` (the de-facto GitLab MCP for free-tier projects — GitLab's own MCP endpoint at `<gitlab>/api/v4/mcp` is Ultimate-tier on group namespaces only). | hackathon rule 3. Reads + `create_issue` go through MCP unconditionally; `create_merge_request` is attempted via MCP first then falls through to REST when the branch doesn't yet exist; the merge fired by Approve is REST-only (no merge tool is registered on the agent). |
 | Observability | **Cloud Logging / Trace / Monitoring** | hackathon rule 4; OpenTelemetry instruments the victim service and exports to Cloud Trace |
 | Compute | **Cloud Run** | minimal-ops, scale-to-zero free tier; one image / three roles for the victim |
 | Server | **FastAPI** + Server-Sent Events | streams the agent's step-by-step reasoning live to the UI |
