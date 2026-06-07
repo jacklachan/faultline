@@ -95,6 +95,15 @@ def build_agent(*, include_gitlab: bool = True) -> Any:
         include_gitlab,
     )
 
+    # Deterministic sampling. The 8-step policy is a procedure, not a
+    # creative task — we want the same investigation steps every time.
+    try:
+        from google.genai import types as genai_types
+
+        gen_config = genai_types.GenerateContentConfig(temperature=0.0)
+    except Exception:  # pragma: no cover — only happens if google-genai missing
+        gen_config = None
+
     return LlmAgent(
         name="faultline",
         model=model,
@@ -107,4 +116,5 @@ def build_agent(*, include_gitlab: bool = True) -> Any:
         ),
         instruction=INVESTIGATION_POLICY,
         tools=tools,
+        generate_content_config=gen_config,
     )
