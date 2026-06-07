@@ -1,5 +1,19 @@
 # Faultline — Google Cloud Rapid Agent Hackathon submission (GitLab track)
 
+> **Note on runtime model.** The repository's default model is
+> `gemini-3.1-pro-preview` (see `agent/agent.py` DEFAULT_MODEL and the
+> README badge). Gemini 3 preview models require per-project allowlist
+> access on Vertex AI; the live demo runs against a GCP project that has
+> not yet been granted that access (every Gemini 3 model id currently
+> returns 404 NOT_FOUND on this project across all regions). To keep
+> the public live URL functional for judges, `VERTEX_AI_MODEL` is
+> overridden to `gemini-2.5-flash` on the deployed Cloud Run service.
+> The investigation policy, ADK orchestration, GitLab MCP wiring, and
+> end-to-end approval loop are unchanged; only the reasoning model
+> differs from the code default. As soon as the project is allowlisted
+> the deploy reverts to `gemini-3.1-pro-preview` via a single env-var
+> update on the running service.
+
 ## 30-second pitch
 
 When a production service breaks, on-call wastes minutes paging through dashboards just to figure out *which* service is the root cause and *which commit* caused it. **Faultline** is an autonomous Gemini agent that does that triage in seconds: it reads Google Cloud telemetry, walks the service dependency graph to the real source of the cascade, correlates the failure window with recent GitLab commits, names the suspect, drafts the postmortem, and stages a one-click rollback merge request. Then it stops — a human still approves before anything merges.
