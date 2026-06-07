@@ -69,14 +69,14 @@ def _fresh():
     return importlib.import_module("agent.agent")
 
 
-def test_default_model_is_gemini_2_5_flash():
+def test_default_model_is_gemini_3_1_pro_preview():
     captured = _install_adk_stubs()
     mod = _fresh()
     mod.build_agent()
 
     captured["LlmAgent"].assert_called_once()
     kwargs = captured["LlmAgent"].call_args.kwargs
-    assert kwargs["model"] == "gemini-2.5-flash"
+    assert kwargs["model"] == "gemini-3.1-pro-preview"
 
 
 def test_model_override_via_env(monkeypatch):

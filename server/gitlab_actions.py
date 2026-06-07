@@ -1,12 +1,22 @@
 """Direct GitLab REST calls used by /approve.
 
-The GitLab MCP server's published tool list (per docs.gitlab.com) covers
-``create_*``, ``get_*``, and ``search`` operations, but does **not** expose a
-``merge_merge_request`` tool. Faultline's read + create path goes through MCP
-(rule 3, "load-bearing"); the merge action that runs when the human clicks
-Approve uses GitLab's REST API directly, which is fine — rule 3 explicitly
-lists "reading commits/diffs and creating the issue + draft MR" as the MCP
-flows, not the eventual merge.
+Faultline deliberately keeps the **merge** action out of the agent's toolset
+(see ``agent/tools_gitlab.py``). The community ``@zereight/mcp-gitlab`` MCP
+server does ship a ``merge_merge_request`` tool — we just do not register
+it. The only path that can merge an MR in this system is ``POST /approve``
+from the FastAPI server, which calls the REST API directly. The human
+Approve click is the only thing that flips a Draft MR to Ready and merges
+it; the agent has no tool wired up to do so.
+
+Two operations:
+
+  mark_mr_ready : flip a Draft MR to Ready (strip the "Draft:" title prefix).
+  merge_mr      : accept the MR; GitLab CI then redeploys the victim.
+
+A third helper (``revert_commit_via_rest`` + ``open_draft_mr_via_rest``) is
+used by the post-investigation REST fallback in ``server/investigate.py``
+when the agent's MCP-side ``create_merge_request`` call cannot create the
+Draft rollback MR. See that file for the contract.
 
 Two operations:
 
@@ -83,26 +93,50 @@ async def mark_mr_ready(project_path: str, mr_iid: int) -> dict[str, Any]:
         return resp.json()
 
 
-async def _resolve_revertable_sha(client: httpx.AsyncClient, project_path: str, sha: str) -> str:
-    """Pick the actual merge commit to revert.
+async def _candidate_revert_shas(
+    client: httpx.AsyncClient, project_path: str, sha: str
+) -> list[tuple[str, str]]:
+    """Return ordered (sha, reason) candidates the revert flow should try.
 
-    The agent's ``sha`` hint can point at any historical commit on main —
-    including ones that have already been reverted in a prior demo run.
-    We prefer the **latest merged MR** on the project because in this demo
-    that is by definition the regression we just planted. Only if no
-    merged MR exists do we fall back to the agent's hint or the default-
-    branch HEAD.
+    Strategy:
+      1. If the agent's ``sha`` hint is reachable in the repo AND it is the
+         tip of a merged MR, use that MR's ``merge_commit_sha`` — that is
+         the agent's actual verdict.
+      2. If the hint resolves but isn't in a merged MR (rare), try it
+         directly.
+      3. Latest merged MR on the project (demo-convenience: usually the
+         freshest /demo/plant).
+      4. Default-branch HEAD.
 
-    Returns a SHA that is (a) reachable from the default branch and
-    (b) the most recent merge into it, so reverting it has the highest
-    chance of cleanly undoing the regression that triggered the
-    investigation.
+    Caller is expected to try them in order, falling through on revert
+    conflict / 4xx. We surface the verdict over convenience instead of the
+    other way round; convenience only matters when the verdict cannot apply
+    (e.g. it has already been reverted, or it was a hallucination).
     """
     base = _gitlab_base()
     pid = _project_url_id(project_path)
     default = os.getenv("GITLAB_DEFAULT_BRANCH", "main")
+    out: list[tuple[str, str]] = []
 
-    # (1) latest merged MR on project — usually the fresh demo plant.
+    # (1) + (2): inspect the agent's hint
+    if sha:
+        mrs_resp = await client.get(
+            f"{base}/api/v4/projects/{pid}/repository/commits/{sha}/merge_requests",
+            headers=_headers(),
+        )
+        if mrs_resp.status_code == 200:
+            for m in mrs_resp.json():
+                if m.get("state") == "merged" and m.get("merge_commit_sha"):
+                    out.append((m["merge_commit_sha"], f"agent verdict (MR !{m.get('iid')})"))
+                    break
+        probe = await client.get(
+            f"{base}/api/v4/projects/{pid}/repository/commits/{sha}",
+            headers=_headers(),
+        )
+        if probe.status_code == 200 and not any(s == sha for s, _ in out):
+            out.append((sha, "agent verdict (direct)"))
+
+    # (3) latest merged MR — convenience fallback
     latest = await client.get(
         f"{base}/api/v4/projects/{pid}/merge_requests",
         headers=_headers(),
@@ -110,37 +144,23 @@ async def _resolve_revertable_sha(client: httpx.AsyncClient, project_path: str, 
     )
     if latest.status_code == 200:
         items = latest.json()
-        if items:
-            best = items[0]
-            merge_sha = best.get("merge_commit_sha")
-            if merge_sha:
-                log.info(
-                    "resolved revert target -> latest merged MR !%s merge_commit_sha %s (agent hinted %s)",
-                    best.get("iid"), merge_sha[:8], (sha or "")[:8],
-                )
-                return merge_sha
+        if items and items[0].get("merge_commit_sha"):
+            ms = items[0]["merge_commit_sha"]
+            if not any(s == ms for s, _ in out):
+                out.append((ms, f"latest merged MR !{items[0].get('iid')}"))
 
-    # (2) agent's hint, if it exists and is reachable.
-    if sha:
-        probe = await client.get(
-            f"{base}/api/v4/projects/{pid}/repository/commits/{sha}",
-            headers=_headers(),
-        )
-        if probe.status_code == 200:
-            return sha
-
-    # (3) default-branch HEAD.
+    # (4) default branch HEAD — last resort
     head = await client.get(
         f"{base}/api/v4/projects/{pid}/repository/commits",
         headers=_headers(),
         params={"ref_name": default, "per_page": 1},
     )
-    head.raise_for_status()
-    items = head.json()
-    if not items:
-        raise RuntimeError(f"no commits on {default}; cannot revert")
-    log.warning("falling back to default-branch HEAD %s for revert", items[0]["id"][:8])
-    return items[0]["id"]
+    if head.status_code == 200:
+        items = head.json()
+        if items and not any(s == items[0]["id"] for s, _ in out):
+            out.append((items[0]["id"], "default-branch HEAD"))
+
+    return out
 
 
 async def revert_commit_via_rest(project_path: str, sha: str, branch: str) -> dict[str, Any]:
@@ -161,46 +181,68 @@ async def revert_commit_via_rest(project_path: str, sha: str, branch: str) -> di
     default = os.getenv("GITLAB_DEFAULT_BRANCH", "main")
 
     async with httpx.AsyncClient(timeout=20.0) as client:
-        revertable = await _resolve_revertable_sha(client, project_path, sha)
+        candidates = await _candidate_revert_shas(client, project_path, sha)
+        if not candidates:
+            raise RuntimeError("no revertable commits found")
 
-        # Step 1: create the revert branch from the default branch tip.
-        # If it already exists from a prior attempt, delete + recreate.
         create_branch_url = f"{base}/api/v4/projects/{pid}/repository/branches"
-        br_resp = await client.post(
-            create_branch_url,
-            headers=_headers(),
-            params={"branch": branch, "ref": default},
-        )
-        if br_resp.status_code >= 400 and "already exists" in br_resp.text.lower():
-            await client.delete(
-                f"{base}/api/v4/projects/{pid}/repository/branches/{branch}",
-                headers=_headers(),
+        last_error: Exception | None = None
+
+        for cand_sha, reason in candidates:
+            log.info(
+                "revert attempt: sha=%s reason=%s onto branch=%s",
+                cand_sha[:8], reason, branch,
             )
+
+            # (re)create the revert branch from default.
             br_resp = await client.post(
                 create_branch_url,
                 headers=_headers(),
                 params={"branch": branch, "ref": default},
             )
-        br_resp.raise_for_status()
+            if br_resp.status_code >= 400 and "already exists" in br_resp.text.lower():
+                await client.delete(
+                    f"{base}/api/v4/projects/{pid}/repository/branches/{branch}",
+                    headers=_headers(),
+                )
+                br_resp = await client.post(
+                    create_branch_url,
+                    headers=_headers(),
+                    params={"branch": branch, "ref": default},
+                )
+            if br_resp.status_code >= 400:
+                last_error = RuntimeError(
+                    f"create branch failed for {cand_sha[:8]}: {br_resp.text[:200]}"
+                )
+                continue
 
-        # Step 2: revert ``revertable`` ONTO the freshly created branch.
-        # When the target is a merge commit we MUST tell GitLab which parent
-        # is the mainline; `mainline=1` = the first parent (i.e. the
-        # default-branch tip the merge fast-forwarded from). Without this
-        # GitLab returns 400 on merge-commit reverts.
-        revert_url = f"{base}/api/v4/projects/{pid}/repository/commits/{revertable}/revert"
-        resp = await client.post(
-            revert_url,
-            headers=_headers(),
-            json={"branch": branch, "mainline": 1},
-        )
-        if resp.status_code >= 400 and "mainline" not in resp.text.lower():
-            # Retry without `mainline` for non-merge commits.
-            resp = await client.post(
-                revert_url, headers=_headers(), json={"branch": branch}
+            # Revert with mainline=1 (works for merge commits); on a non-merge
+            # commit GitLab will reject mainline -> retry without it.
+            revert_url = f"{base}/api/v4/projects/{pid}/repository/commits/{cand_sha}/revert"
+            applied = False
+            for payload in ({"branch": branch, "mainline": 1}, {"branch": branch}):
+                resp = await client.post(revert_url, headers=_headers(), json=payload)
+                if resp.status_code == 200:
+                    result = resp.json()
+                    result["_picked_sha"] = cand_sha
+                    result["_picked_reason"] = reason
+                    return result
+                if resp.status_code == 400 and "mainline" in resp.text.lower():
+                    continue
+                last_error = RuntimeError(
+                    f"revert {cand_sha[:8]} ({reason}) -> {resp.status_code}: {resp.text[:200]}"
+                )
+                break
+            if applied:
+                break
+
+            # Clean up the branch so the next candidate has a fresh start.
+            await client.delete(
+                f"{base}/api/v4/projects/{pid}/repository/branches/{branch}",
+                headers=_headers(),
             )
-        resp.raise_for_status()
-        return resp.json()
+
+        raise last_error or RuntimeError("all revert candidates exhausted")
 
 
 async def open_draft_mr_via_rest(

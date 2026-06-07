@@ -16,7 +16,10 @@ we copy from our ``GITLAB_TOKEN`` / ``GITLAB_URL`` settings.
 Tool allowlist
 --------------
 Only the tools the 8-step investigation policy actually uses are exposed to
-the agent:
+the agent. The merge action is **deliberately not** in this list — the human
+Approve gate is the only path that merges, and it does so via REST in
+``server/gitlab_actions.py``. The agent literally cannot pick a merge tool
+because there isn't one registered on its toolset.
 
     list_commits              - step 3 (recent commits on the suspect service)
     get_merge_request         - MR metadata
@@ -24,7 +27,6 @@ the agent:
     list_merge_requests       - find recent merges
     create_issue              - step 7b (postmortem)
     create_merge_request      - step 7c (DRAFT rollback)
-    merge_merge_request       - used by /approve (phase 7)
 """
 
 from __future__ import annotations
@@ -44,7 +46,6 @@ GITLAB_TOOL_ALLOWLIST: tuple[str, ...] = (
     "list_merge_requests",
     "create_issue",
     "create_merge_request",
-    "merge_merge_request",
 )
 
 

@@ -124,9 +124,11 @@ def test_tool_filter_is_allowlist():
         "create_issue",
         "create_merge_request",
         "get_merge_request_diffs",
-        "merge_merge_request",
     ):
         assert required in kwargs["tool_filter"]
+    # Hard architectural constraint: no merge tool is registered. /approve
+    # routes the merge through REST instead.
+    assert "merge_merge_request" not in kwargs["tool_filter"]
 
 
 def test_toolset_uses_stdio_connection_params():

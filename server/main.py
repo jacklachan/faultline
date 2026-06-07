@@ -16,10 +16,27 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
+
+
+def _require_demo_secret(x_faultline_token: str | None = Header(default=None)) -> None:
+    """Gate mutating endpoints behind a shared secret.
+
+    If ``FAULTLINE_DEMO_SECRET`` is unset, the endpoints are open (dev / first
+    deploy). In production set the env var; every POST to /demo/* and
+    /approve/* then requires ``X-Faultline-Token: <secret>`` as a header.
+    """
+    expected = os.getenv("FAULTLINE_DEMO_SECRET")
+    if not expected:
+        return
+    if x_faultline_token != expected:
+        raise HTTPException(status_code=401, detail="missing or invalid X-Faultline-Token header")
+
+
+import os  # noqa: E402
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -120,7 +137,11 @@ async def investigate_get(
 
 
 @app.post("/demo/plant")
-async def demo_plant(scenario: str = "n_plus_one") -> dict[str, Any]:
+async def demo_plant(
+    scenario: str = "n_plus_one",
+    x_faultline_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_demo_secret(x_faultline_token)
     """Plant a fresh regression end-to-end:
 
       1. create a real GitLab branch + commit + merged MR
@@ -152,8 +173,11 @@ async def demo_plant(scenario: str = "n_plus_one") -> dict[str, Any]:
 
 
 @app.post("/demo/reset")
-async def demo_reset() -> dict[str, Any]:
+async def demo_reset(
+    x_faultline_token: str | None = Header(default=None),
+) -> dict[str, Any]:
     """Clear REGRESSION_MODE on the live victim so latency returns to baseline."""
+    _require_demo_secret(x_faultline_token)
     try:
         return await set_data_regression("")
     except Exception as exc:
@@ -167,7 +191,11 @@ def pending() -> dict[str, Any]:
 
 
 @app.post("/approve/{rollback_id}")
-async def approve(rollback_id: str) -> dict[str, Any]:
+async def approve(
+    rollback_id: str,
+    x_faultline_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_demo_secret(x_faultline_token)
     """Mark the draft rollback MR Ready, then merge it.
 
     Merging triggers the victim_service ``.gitlab-ci.yml`` deploy job, which

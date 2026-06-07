@@ -217,7 +217,6 @@ async def _real_run(
         "get_merge_request_diffs": (4, "Read the suspect diff"),
         "create_issue": (7, "Action: open postmortem issue"),
         "create_merge_request": (7, "Action: stage DRAFT rollback MR"),
-        "merge_merge_request": (7, "Action: merge rollback MR"),
     }
 
     async for event in runner.run_async(

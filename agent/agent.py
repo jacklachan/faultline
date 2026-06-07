@@ -27,9 +27,10 @@ from . import tools_telemetry
 log = logging.getLogger(__name__)
 
 
-# Default to Gemini 2.5 Flash on Vertex AI. Cheapest GA Gemini 2.5 model — fits
-# the free-tier decision — and supports function calling + MCP tools.
-DEFAULT_MODEL = "gemini-2.5-flash"
+# Default to Gemini 3.1 Pro (preview) on Vertex AI — this is the model class
+# the hackathon spotlights. Override with VERTEX_AI_MODEL if you want the
+# cheaper gemini-3-flash for cost-sensitive runs.
+DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
 # Telemetry tools we want the agent to be able to call. These are plain
 # Python callables; ADK auto-wraps them as function tools from their signature
