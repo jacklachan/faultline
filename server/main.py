@@ -54,6 +54,22 @@ log = logging.getLogger(__name__)
 app = FastAPI(title="Faultline", version="0.5.0-phase5")
 
 
+@app.on_event("startup")
+def _eager_vertex_env_setup() -> None:
+    """Resolve GOOGLE_CLOUD_LOCATION at startup, not lazily on first
+    /investigate. This is purely so /health can echo the location every
+    reviewer wants to see without having to trigger an investigation
+    first. If Vertex envs are misconfigured we log but do not crash —
+    /health stays usable for diagnostics.
+    """
+    try:
+        from agent.agent import _ensure_vertex_env  # type: ignore
+
+        _ensure_vertex_env()
+    except Exception as exc:
+        log.warning("eager vertex env setup deferred: %s", exc)
+
+
 class InvestigateRequest(BaseModel):
     service: str = Field(..., description="The alerting service, e.g. faultline-victim-frontend.")
     window_minutes: int = Field(15, ge=1, le=240)
@@ -69,7 +85,20 @@ class InvestigateRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "phase": "5"}
+    """Liveness + the proof reviewers ask for.
+
+    Returns the model the agent will actually pass to ADK, alongside the
+    Vertex AI location used. Lets anyone confirm in one curl that the live
+    runtime is Gemini 3 on the global endpoint, without scraping Cloud Run
+    logs.
+    """
+    return {
+        "status": "ok",
+        "phase": "5",
+        "vertex_ai_model": os.getenv("VERTEX_AI_MODEL", "(unset)"),
+        "vertex_ai_location": os.getenv("GOOGLE_CLOUD_LOCATION", "(unset)"),
+        "google_genai_use_vertexai": os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "(unset)"),
+    }
 
 
 async def _investigate_stream(
